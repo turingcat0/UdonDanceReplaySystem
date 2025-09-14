@@ -21,6 +21,7 @@ Before you begin, please ensure you have the following software and packages ins
 
 * **Unity:** `2022.3.22f1`
 * **VRChat World SDK:** `3.8.1`
+* **Vizvid Player** `1.4.8`
 
 ### Installation
 
