@@ -22,12 +22,28 @@ Before you begin, please ensure you have the following software and packages ins
 * **Unity:** `2022.3.22f1`
 * **VRChat World SDK:** `3.8.1`
 * **Vizvid Player** `1.4.8`
-
 ### Installation
 
-1.  Navigate to the [**Releases**](https://github.com/turingcat0/UdonDanceReplaySystem/releases) page of this repository.
-2.  Download the latest `.zip` file.
-3.  Extract the contents of the downloaded file directly into the `Assets/` folder of your Unity project.
+1. Install all prerequisites.
+2. Navigate to the [**Releases**](https://github.com/turingcat0/UdonDanceReplaySystem/releases) page of this repository.
+3. Download the latest `.zip` file.
+4. Extract the contents of the downloaded file directly into your Unity project's `Assets/` folder.
+5. Open **`Core_Timing.cs`** of Vizvid player (around line **41**) and **remove the `private` accessor** from the following property setter:
+
+   ```csharp
+   // Change this:
+   private set {
+       activeHandler.Time = value;
+       lastSyncRawTime = value;
+       isBuffering = false; // Reset buffering state
+   }
+
+   // To this:
+   set {
+       activeHandler.Time = value;
+       lastSyncRawTime = value;
+       isBuffering = false; // Reset buffering state
+   }
 
 ### Usage & Example
 

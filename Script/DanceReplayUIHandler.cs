@@ -14,6 +14,8 @@ public class DanceReplayUIHandler : UdonSharpBehaviour
     public GameObject toggleReplay;
     public GameObject calibration;
 
+    public GameObject handMenu;
+
     public Text statusUI;
     public Text playerNameUI;
 
@@ -28,20 +30,35 @@ public class DanceReplayUIHandler : UdonSharpBehaviour
 
     void Start()
     {
-        recordTextUI = toggleRecord.GetComponentInChildren<Text>();
 
-        replayTextUI = toggleReplay.GetComponentInChildren<Text>();
+        recordTextUI = toggleRecord ? toggleRecord.GetComponentInChildren<Text>() : null;
 
-        calibrationTextUI = calibration.GetComponentInChildren<Text>();
+        replayTextUI = toggleReplay ? toggleReplay.GetComponentInChildren<Text>() : null;
+
+        calibrationTextUI = calibration ? calibration.GetComponentInChildren<Text>() : null;
     }
 
     public void Update()
     {
-        toggleRecord.SetActive(danceReplay.core.IsReady && danceReplay.calibrated);
-        toggleReplay.SetActive(danceReplay.core.IsReady && danceReplay.calibrated);
+        if (toggleRecord)
+        {
+            toggleRecord.SetActive(danceReplay.core.IsReady && danceReplay.calibrated);
+        }
 
-        recordTextUI.text = danceReplay.recording ? "停止录制" : "开始录制";  // Stop recording, Start Recording
-        replayTextUI.text = danceReplay.replaying ? "停止重放" : "开始重放";  // Stop replying,  Start Replaying
+        if (toggleReplay)
+        {
+            toggleReplay.SetActive(danceReplay.core.IsReady && danceReplay.calibrated);
+        }
+
+        if (recordTextUI)
+        {
+            recordTextUI.text = danceReplay.recording ? "停止录制" : "开始录制";  // Stop recording, Start Recording
+        }
+
+        if (replayTextUI)
+        {
+            replayTextUI.text = danceReplay.replaying ? "停止重放" : "开始重放";  // Stop replying,  Start Replaying
+        }
 
         if (statusUI)
         {
@@ -68,6 +85,11 @@ public class DanceReplayUIHandler : UdonSharpBehaviour
             {
                 playerNameUI.text = "";
             }
+        }
+
+        if (handMenu)
+        {
+            handMenu.SetActive(danceReplay.replaying || danceReplay.justReplayed);
         }
     }
 

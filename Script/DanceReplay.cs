@@ -2,11 +2,18 @@
 using JLChnToZ.VRC.VVMW;
 using UdonSharp;
 using UnityEngine;
+using UnityEngine.UI;
 using VRC.SDK3.UdonNetworkCalling;
 using VRC.SDKBase;
 using VRC.Udon;
 using VRC.Udon.Common.Interfaces;
 
+
+public enum VideoBackend
+{
+    AvPro,
+    Builtin
+}
 
 [UdonBehaviourSyncMode(BehaviourSyncMode.Manual)]
 public class DanceReplay : UdonSharpBehaviour
@@ -15,8 +22,7 @@ public class DanceReplay : UdonSharpBehaviour
     private VRCPlayerApi sourcePlayer;
     public int maxRecordingFrames;
 
-    [HideInInspector, UdonSynced]
-    public String sourcePlayerName;
+    [HideInInspector, UdonSynced] public String sourcePlayerName;
 
     // Recorded properties
     // All local
@@ -73,7 +79,8 @@ public class DanceReplay : UdonSharpBehaviour
     [HideInInspector] public bool recording = false;
     [HideInInspector] public bool replaying = false;
     [HideInInspector] public bool calibrated = false;
-    private bool justReplayed = false;
+
+    [HideInInspector] public bool justReplayed = false;
 
     private bool lastTickPaused = false;
     private String lastAvailableURL = "";
@@ -82,8 +89,9 @@ public class DanceReplay : UdonSharpBehaviour
     // Vizvid
     public Core core;
 
-
     private const float MinJumpInterval = 0.5f;
+    private const float StopReplayingCoolDown = 1.0f;
+    private float lastStartReplayingTime = 0.0f;
 
     private void Start()
     {
@@ -119,9 +127,9 @@ public class DanceReplay : UdonSharpBehaviour
         InitializeTarget();
     }
 
-    void Record()
+    void Record(float videoTime)
     {
-        timeStamps[currentFrame] = core.Time;
+        timeStamps[currentFrame] = videoTime;
         sourceT_Root[currentFrame] = sourcePlayer.GetPosition();
         sourceQ_Root[currentFrame] = sourcePlayer.GetRotation();
         sourceTs[currentFrame] = new Vector3[BoneCount];
@@ -174,8 +182,8 @@ public class DanceReplay : UdonSharpBehaviour
                   (NetworkCalling.CallingPlayer == Networking.LocalPlayer));
         if (core.IsPaused && Networking.GetOwner(gameObject) == Networking.LocalPlayer)
         {
-            Debug.Log("We are the owner so Play the player");
-            core.Play();
+            Debug.Log("We are the owner so play the player");
+            PlayVideo();
         }
     }
 
@@ -195,7 +203,7 @@ public class DanceReplay : UdonSharpBehaviour
         }
 
         recording = false;
-        length = currentFrame;
+        length = Mathf.Max(currentFrame, 1);
 
         Debug.Log("Stopping recording: currentFrame:" + currentFrame + ", currentLength:" + length + ", local:" +
                   (NetworkCalling.CallingPlayer == Networking.LocalPlayer));
@@ -215,8 +223,14 @@ public class DanceReplay : UdonSharpBehaviour
         if (Networking.GetOwner(gameObject) == Networking.LocalPlayer)
         {
             Debug.Log("We are the owner so Pause the player.");
-            core.Pause();
+            PauseVideo();
         }
+
+        // Debug only
+        // for (int i = 0; i < length; i++)
+        // {
+        //     Debug.Log($"Frame {i}: time: {timeStamps[i]}");
+        // }
     }
 
     [NetworkCallable]
@@ -245,20 +259,25 @@ public class DanceReplay : UdonSharpBehaviour
         currentFrame = 1;
         replaying = true;
 
+        lastStartReplayingTime = Time.unscaledTime;
 
         Debug.Log("Start replaying: currentFrame:" + currentFrame + ", currentLength:" + length + ", local:" +
                   (NetworkCalling.CallingPlayer == Networking.LocalPlayer));
-        if (core.IsPaused && Networking.GetOwner(gameObject) == Networking.LocalPlayer)
+        if (Networking.GetOwner(gameObject) == Networking.LocalPlayer)
         {
-            Debug.Log("We are the owner so Play the player");
+            Debug.Log("We are the owner so prepare the player");
             float startTime = timeStamps[0];
-            core.Play();
-            core.Time = startTime;
-            // If not-owner player C trigger replay and they don't set progress, their replay will stop immediately
-            StartReplayBroadcast();
-        }
 
-        // core.Time
+            Seek(startTime);
+            if (core.IsPaused)
+            {
+                PlayVideo();
+            }
+
+            // If not-owner player trigger replay and they don't set progress, their replay will stop immediately
+            StartReplayBroadcast();
+            RequestSerialization();
+        }
     }
 
     [NetworkCallable]
@@ -282,12 +301,106 @@ public class DanceReplay : UdonSharpBehaviour
         if (Networking.GetOwner(gameObject) == Networking.LocalPlayer)
         {
             Debug.Log("we are the owner so pause the player");
-            core.Pause();
+            PauseVideo();
         }
 
         replaying = false;
         justReplayed = true;
     }
+
+
+    public float GetStartTime()
+    {
+        return timeStamps[0];
+    }
+
+    public float GetEndTime()
+    {
+        return timeStamps[length];
+    }
+
+    private VideoBackend GetVideoBackend()
+    {
+        return core && core.IsAVPro ? VideoBackend.AvPro : VideoBackend.Builtin;
+    }
+
+
+    private const float SeekCoolDown = 0.5f;
+    private float lastSeekTime = 0f;
+
+    public void Seek(float targetTime)
+    {
+        if (!core)
+        {
+            return;
+        }
+
+        // For builtin player, we need cool down
+        if (GetVideoBackend() == VideoBackend.Builtin)
+        {
+            if (Time.unscaledTime - lastSeekTime < SeekCoolDown)
+            {
+                return;
+            }
+
+            lastSeekTime = Time.unscaledTime;
+        }
+
+
+        core.Time = targetTime;
+    }
+
+
+    void PlayVideo()
+    {
+        core.Play();
+    }
+
+    void PauseVideo()
+    {
+        core.Pause();
+    }
+
+    private float lastPlayerTime = 0.0f;
+    private int frameCount = 0;
+    private float playerInterval = 0.33f;
+    private float smoothedTime = 0.0f;
+
+    public float GetVideoTime()
+    {
+        if (GetVideoBackend() == VideoBackend.Builtin)
+        {
+            if (frameCount == Time.frameCount)
+            {
+                return smoothedTime;
+            }
+
+            frameCount = Time.frameCount;
+            float playerTime = core.Time;
+            float interval = playerTime - lastPlayerTime;
+            if (interval > 0 && interval < 0.10f)
+            {
+                playerInterval = interval;
+            }
+
+            lastPlayerTime = playerTime;
+            smoothedTime = Mathf.Clamp(smoothedTime + Time.deltaTime * GetPlaybackSpeed(), playerTime,
+                playerTime + playerInterval);
+            return smoothedTime;
+        }
+        else
+        {
+            // AvPro
+            return core.Time;
+        }
+    }
+
+
+    private float GetPlaybackSpeed()
+    {
+        return core.Speed;
+    }
+
 
     private void Update()
     {
@@ -335,7 +448,7 @@ public class DanceReplay : UdonSharpBehaviour
                 return;
             }
 
-            float time = core.Time;
+            float time = GetVideoTime();
 
             // Progress Check
             // Rollback to proper recorded frame
@@ -344,27 +457,31 @@ public class DanceReplay : UdonSharpBehaviour
                 currentFrame--;
             }
 
-            Record();
+            Record(time);
             currentFrame++;
         }
         else if (replaying && core.IsReady)
         {
-            float time = core.Time;
+            float time = GetVideoTime();
 
-            if (Networking.GetOwner(gameObject) == Networking.LocalPlayer)
+            bool coolDown = Time.unscaledTime - lastStartReplayingTime > StopReplayingCoolDown;
+
+            if (Networking.GetOwner(gameObject) == Networking.LocalPlayer &&
+                coolDown)
             {
                 // Check if the player set progress out of recorded range
-                if (time < timeStamps[1])
+                if (time < timeStamps[1] - 0.34f)
                 {
                     Debug.Log("progress is before first frame, so set the progress to first frame's timestamp");
                     currentFrame = 1;
-                    core.Time = timeStamps[1];
+                    Seek(timeStamps[1]);
+                    // Built-in backend handles throttling inside TryRequestSeek().
                 }
-                else if (time > timeStamps[length - 1])
+                else if (time > timeStamps[length - 1] + 0.34f)
                 {
                     Debug.Log("progress is after lastest frame, so set the progress latest frame's timestamp");
                     currentFrame = length - 1;
-                    core.Time = timeStamps[length - 1];
+                    Seek(timeStamps[length - 1]);
                 }
             }
 
@@ -383,7 +500,10 @@ public class DanceReplay : UdonSharpBehaviour
                 currentFrame++;
             }
 
-            if (Networking.GetOwner(gameObject) == Networking.LocalPlayer)
+            // Debug only
+            // Debug.Log($"Player Time: {time}");
+
+            if (Networking.GetOwner(gameObject) == Networking.LocalPlayer && coolDown)
             {
                 // Handle if the player drag the progress
                 if (currentFrame > 0)
@@ -392,7 +512,7 @@ public class DanceReplay : UdonSharpBehaviour
                     {
                         Debug.Log(
                             "next frame is much later than current progress so we jump to next frame's timestamp");
-                        core.Time = timeStamps[currentFrame];
+                        Seek(timeStamps[currentFrame]);
                     }
                 }
             }
@@ -413,7 +533,8 @@ public class DanceReplay : UdonSharpBehaviour
                 sourceQ_Root[currentFrame], lerpFactor);
 
             ApplyTargetTQ();
-            if (currentFrame >= length && Networking.GetOwner(gameObject) == Networking.LocalPlayer)
+            if (currentFrame >= length && Time.unscaledTime - lastStartReplayingTime > StopReplayingCoolDown &&
+                Networking.GetOwner(gameObject) == Networking.LocalPlayer)
             {
                 Debug.Log("Replaying Length exceeded");
                 StopReplayBroadcast();
@@ -543,7 +664,6 @@ public class DanceReplay : UdonSharpBehaviour
             if (targetBones[i])
                 targetBones[i].localRotation = targetRestLQs[i];
         targetRoot.localScale = currentSourceScale * targetUnitScale;
-
     }
 
     void CalibrateScale()
